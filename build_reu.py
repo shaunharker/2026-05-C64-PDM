@@ -22,7 +22,6 @@ def build_reu(input_file, output_file, reu_size_mb=16):
     print(f"Applying Delta-Sigma Modulation (8-bit to 1-bit)...")
     error = 0
     
-    # Fast integer delta-sigma loop
     for i in range(limit):
         val = raw_bytes[i] + error
         if val >= 128:

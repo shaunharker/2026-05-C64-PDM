@@ -99,18 +99,39 @@ ffmpeg -i your_song.mp3 -t 16.7 -ar 985248 -ac 1 -f u8 -c:a pcm_u8 1mhz.pcm8
 
 Here 16.7 is the length of the sample in seconds, while 985248 is the clock speed (in Hz) of a PAL C64 system. (NTSC C64 has a clock speed of 1.022727 MHz.)
 
-### Step 2. Build REU image `build_reu.py`
+### Step 2. Build REU image `build_reu.py` -- Converts PCM8 to PDM
 
 Next we take our `1mhz.pcm8` file and convert it to the REU image used by the program.
-
-The script uses so-called 1st-order 1-bit delta-sigma modulator. This is a fancy term for the most obvious quantization algorithm (i.e. sweep the quantization error forward as you choose 1's and 0's). The code should make the simplicity of the technique clear.
 
 ```bash
 python build_reu.py 1mhz.pcm8 -o pdm.reu
 ```
 
-Note that the REU image `pdm.reu` that is created is nothing fancy: in fact, it is literally just the bytes themselves. Just a 16MiB file of bytes that are either 0 or 1.
+Note that the REU image `pdm.reu` that is created is nothing fancy: in fact, it is literally just the bytes themselves. Just a 16MiB file of bytes that are either 0 or 1. (Why not bitpacked? Because our REU DMA trick requires bytes to transfer to `$d402`. It's a terribly inefficient use of cartridge space, though. If it weren't for this, we could fit over two minutes of audio using this format.)
 
+The script uses so-called 1st-order 1-bit *delta-sigma modulator*. This is very intimidating name for a rather simple algorithm. It is a quantization algorithm turning a string of 8-bit values into 1-bit values by comparing to 128, and sweeping quantization error forward (c.f. dithering algorithms for images; this is just a 1D version of Floyd-Steinberg). The `build_reu.py` script just applies this transformation and hands back our 16MiB REU image.
+
+Here's the algorithm. Notice how on each step it computes an error, and tosses that onto the next byte. That's the idea. Whether or not this results in the cleanest quantization, I do not know. For a high enough bitrate, it's obviously fine. Is there some more computationally expensive way to quantize that sounds better at the 1MHz rate? Probably. I'm not an expert!
+
+```python
+    target_size = reu_size_mb * 1024 * 1024
+    # Pre-fill with 0x00 (silence) to ensure the file is exactly the requested size
+    output = bytearray(target_size) 
+    limit = min(len(raw_bytes), target_size)
+    
+    print(f"Applying Delta-Sigma Modulation (8-bit to 1-bit)...")
+    error = 0
+    
+    for i in range(limit):
+        val = raw_bytes[i] + error
+        if val >= 128:
+            output[i] = 1        # High state
+            error = val - 255
+        else:
+            output[i] = 0        # Low state
+            error = val
+
+```
 ### Step 3. Compilation of assembler code
 
 The assembly code is written in Kick Assembler, and the compilation instruction is:
