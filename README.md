@@ -29,16 +29,16 @@ https://en.wikipedia.org/wiki/Super_Audio_CD
 
 * This code lets you play back 16 second samples on a C64 that are rather high quality except they have a 'ticking' sound in the background.
 * The method is to exploit a cartridge REU's DMA (RAM Expansion Unit Direct Memory Access) to blast the samples (the 0 and 1 bytes) into the `$d402` SID register that controls pulse wave width at the full clock speed of the C64 (~1MHz). The code configures the SID so that the resulting waveform is directly the sequence given, resulting in 1MHz 1-bit PDM on a 1982 machine. (Not that anyone had a 16MiB REU in the 1980s, which only holds enough for 16 seconds of audio using this technique. Technically we could store 8 times as much audio if we packed the bits into the bytes in a sensible way, but then we couldn't use the DMA trick to get such a fast sampling rate.)
-* The DMA is only in 64KiB chunks and this, I assume, is the cause of a ~15Hz 'ticking' sound. In particular the bank switching code interrupts the playback for 10 cycles (microseconds) fifteen times a second. This does not appear to be fixable without getting a more versatile cartridge which allows longer uninterrupted bit-bashing. For example, "The RAD Expansion Unit" would probably be able to be programmed to fix this https://github.com/frntc/RAD
+* The DMA is only in 64KiB chunks and this, I assume, is the cause of a ~15Hz 'ticking' sound. In particular the bank switching code interrupts the playback for 10 cycles (microseconds) fifteen times a second. This is perhaps fixable by getting a more versatile cartridge which allows longer uninterrupted bit-bashing. For example, "The RAD Expansion Unit" would probably be able to be programmed to fix this https://github.com/frntc/RAD. Or perhaps there is a way to quantize the sound that minimizes the effect of the bank switch playback gap. The current approach is a delta-sigma modulation technique which is completely unaware of the delays in playback.
 * This method completely takes over the computer. All interrupts are shut off, the screen is blanked, and the only thing the computer is doing is sending bytes off the cartridge into the SID chip. Anything that messes with the DMA would spoil the results worse than our bank switching.
 
 ### Technical Details
 
 The `pdm.asm` code works as follows:
 
-* We use the pulse waveform, but in a non-standard way. The way the pulse waveform seems to work is that an internal 12-bit counter register--an *oscillator accumulator*--is compared to a 12-bit pulse width (set in `$d402` and `$d403`) in order to determine whether it is in the duty cycle. For example, if the pulse width were 100, then when the oscillator accumulator is less than 100, duty on, otherwise duty off. The frequency register determines the speed at which this oscillator accumulator loops through the values 0-4095. 
-* We set the frequency register at `$d400`-`$d401` to 0. This means the oscillator accumulator never advances. 
-* The oscillator accumulator is reset to 0 by flipping the TEST bit on `$d404` on and off again. Between this and setting the frequency to zero, this locks the oscillator accumulator at 0.
+* We use the pulse waveform, but in a non-standard way. Internally, the SID generates pulse waves using a 24-bit phase accumulator that counts up at a speed set by the frequency register. The chip takes the top 12 bits of this counter (values 0–4095) and compares them to the 12-bit pulse width set in `$d402` and `$d403`. If those top 12 bits are less than the pulse width, the duty cycle is on; otherwise, it's off.
+* We set the frequency register at `$d400`-`$d401` to 0. This means the phase accumulator never advances. 
+* The phase accumulator is reset to 0 by flipping the TEST bit on `$d404` on and off again. Between this and setting the frequency to zero, this locks the phase accumulator at 0.
 * The way the SID chip determines the pulse waveform is to compare its counter to the pulse width and check if it is greater or not. Since the counter is locked at 0, owing to our telling it the frequency is zero and resetting the counter to 0 to never be incremented, then this reduces to asking if the pulse width is equal to 0. Therefore the only two meaningful states of the PW register are zero or non-zero, corresponding to the binary PDM signal. Accordingly, streaming the PDM data directly into either `$d402` or `$d403` plays the sample.
 
 ### Ablation Tests
@@ -49,9 +49,23 @@ I ran these ablation tests (i.e. leaving out a step to make sure it was necessar
 
 *Not flipping the TEST bit on and off to initialize breaks the demo.* Expected: if we don't reset the SID's internal phase register to zero, it will likely (prob = 4095/4096) not be zero. If it is not zero, we expect silence.
 
+*Turning the TEST bit on and leaving it on breaks the demo.* Expected: with the TEST bit on, Oscillator 1 isn't just stuck on the zero phase, but disabled. So we expect silence, which is what we get.
+
 *Changing the audio file by replacing 0's with 2's breaks the demo.* Expected: this is because any two non-zero values are equivalent in our setup, since the SID's logic in this case is reduced to changing if 0 < PW. Whether PW is 1 or 255 or 4095 makes no difference, so long as it is not zero. Changing all bytes to non-zero is thus equivalent to setting them all to 1, or all to 0, for that matter.
 
 *Changing the audio file by replacing the 1's with 255's makes no audible difference.* Expected: this is the same reasoning as before.
+
+### Acknowledgement and Further Materials
+
+Achieving digitized audio on the Commodore 64 requires tricking the SID chip into doing things it was never originally designed for. Relying on prior discoveries by the C64 demoscene and retro-coding community was essential. I call attention to:
+
+* **"The C64 Digi" by Robin Harbron, Levente Harsfalvi, and Stephen Judd**  
+  *(Published in C=Hacking Issue #20, April 2001)*  
+  This article describes the SID's `TEST` bit and how it interacts with the `$d402` Pulse Width register. Resetting the oscillator to execute fast pulse-width modulation is foundational to the 1-bit PDM DAC trick used in this project.  
+  [Read C=Hacking #20](http://www.ffd2.com/fridge/chacking/c=hacking20.txt)
+* **Pex "Mahoney" Tufvesson & High-Fidelity SID Audio**  
+  While this project uses a 1-bit PDM/PWM approach at 1MHz, see also the work of Pex Tufvesson. The "Mahoney DAC" method abuses the SID's analog filter and `$d418` volume register to output 8-bit, 44.1kHz audio, challenging the limits of emulators at the time.  
+  [Read the "Musik Run/Stop" Technical Details PDF](https://livet.se/mahoney/c64-files/Musik_RunStop_Technical_Details_by_Pex_Mahoney_Tufvesson_v2.pdf) | [Mahoney's Homepage](https://www.livet.se/mahoney/)
 
 
 ## Instructions
@@ -115,7 +129,6 @@ Here's the algorithm. Notice how on each step it computes an error, and tosses t
 
 ```python
     target_size = reu_size_mb * 1024 * 1024
-    # Pre-fill with 0x00 (silence) to ensure the file is exactly the requested size
     output = bytearray(target_size) 
     limit = min(len(raw_bytes), target_size)
     

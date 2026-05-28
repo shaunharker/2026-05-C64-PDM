@@ -67,11 +67,10 @@ main:
     sta $d403                  // PW high nibble = 0  (PW = 8 bits LSB only)
     sta $d405                  // A=0 D=0
 
-    /*
+    
     // ablation test #1: including these two lines would break code by making freq > 0
-    lda #$01
-    sta $d400
-    */
+    // lda #$01
+    // sta $d400
     
     lda #$f0
     sta $d406                  // S=F R=0
@@ -87,6 +86,7 @@ main:
     lda #$49                   // %01001001 = pulse + TEST + gate
     sta $d404                  //   TEST forces oscillator accumulator to 0
     
+    // ablation test #3: blanking out the next two lines would break code
     lda #$41                   // %01000001 = pulse + gate (clear TEST)
     sta $d404                  //   accumulator now held at 0 with freq=0
                                //   → audio output is the PW value itself.

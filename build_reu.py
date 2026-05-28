@@ -15,7 +15,6 @@ def build_reu(input_file, output_file, reu_size_mb=16):
         raw_bytes = f.read()
         
     target_size = reu_size_mb * 1024 * 1024
-    # Pre-fill with 0x00 (silence) to ensure the file is exactly the requested size
     output = bytearray(target_size) 
     limit = min(len(raw_bytes), target_size)
     
