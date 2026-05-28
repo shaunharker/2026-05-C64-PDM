@@ -1,0 +1,130 @@
+## Pulse Density Modulation (PDM) on a Commodore 64
+
+## Overview
+
+This is a C64 project to abuse the SID's `$d402` register in order to achieve 1MHz 1-bit PDM playback.
+
+PDM is described here:
+
+https://en.wikipedia.org/wiki/Pulse-density_modulation
+
+It might also be referred to as a 1-bit DAC:
+
+https://en.wikipedia.org/wiki/1-bit_DAC
+
+Here are a couple other related articles:
+
+https://en.wikipedia.org/wiki/Delta-sigma_modulation
+
+https://en.wikipedia.org/wiki/Direct_Stream_Digital
+
+
+### Key facts
+
+* This technique turns audio into a file consisting only of the values 0 and 1, corresponding to a quantized ~1MHz sampling.
+* PDM is the encoding used in Sony's Super Audio CD (SACD) format, under the name Direct Stream Digital. it was released in 1999. they used 1-bit, 2.8224 MHz. Apparently it was popular among audiophiles, but did not get broader market adoption.
+
+### Regarding the current C64 demonstration
+
+* This code lets you play back 16 second samples on a C64 that are rather high quality except they have a 'ticking' sound in the background.
+* The method is to exploit a cartridge REU's DMA (RAM Expansion Unit Direct Memory Access) to blast the samples (the 0 and 1 bytes) into the `$d402` SID register that controls pulse wave width at the full clock speed of the C64 (~1MHz). The code configures the SID so that the resulting waveform is directly the sequence given, resulting in 1MHz 1-bit PDM on a 1982 machine. (Not that anyone had a 16MiB REU in the 1980s, which only holds enough for 16 seconds of audio using this technique. Technically we could store 8 times as much audio if we packed the bits into the bytes in a sensible way, but then we couldn't use the DMA trick to get such a fast sampling rate.)
+* Because the DMA is only in 64KiB chunks, there is a ~15Hz 'ticking' sound caused, I assume, by the bank switching code interrupting the playback for 10 cycles (microseconds) fifteen times a second. This does not appear to be fixable without getting a more versatile cartridge which allows longer uninterrupted bit-bashing. For example, "The RAD Expansion Unit" would probably be able to be programmed to fix this https://github.com/frntc/RAD
+* This method completely takes over the computer. All interrupts are shut off, the screen is blanked, and the only thing the computer is doing is sending bytes off the cartridge into the SID chip. Anything that messes with the DMA would spoil the results worse than our bank switching.
+
+### Technical Details
+
+You can expect the code `pdm.asm`:
+
+* We use the pulse waveform, but in a non-standard way. The way the pulse waveform seems to work is that an internal 12-bit counter register--an *oscillator accumulator*--is compared to a 12-bit pulse width (set in `$d402` and `$d403`) in order to determine whether it is in the duty cycle. For example, if the pulse width were 100, then when the oscillator accumulator is less than 100, duty on, otherwise duty off. The frequency register determines the speed at which this oscillator accumulator loops through the values 0-4095. 
+* We set the frequency register at `$d400`-`$d401` to 0. This means the oscillator accumulator never advances. 
+* The oscillator accumulator is reset to 0 by flipping the TEST bit on `$d404` on and off again. Between this and setting the frequency to zero, this locks the oscillator accumulator at 0.
+* The way the SID chip determines the pulse waveform is to compare its counter to the pulse width and check if it is greater or not. Since the counter is locked at 0, owing to our telling it the frequency is zero and resetting the counter to 0 to never be incremented, then this reduces to asking if the pulse width is equal to 0. Therefore the only two meaningful states of the PW register are zero or non-zero, corresponding to the binary PDM signal. Accordingly, streaming the PDM data directly into either `$d402` or `$d403` plays the sample.
+
+### Ablation Tests
+
+I ran these ablation tests (i.e. leaving out a step to make sure it was necessary) to give evidence that this above technical explanation of how the effect is being achieved on the SID is correct:
+
+*Setting the frequency to a non-zero value breaks the demo.* Expected: in this case, it will pretty much *never* be in the duty cycle, which leads to silence.
+
+*Not flipping the TEST bit on and off to initialize breaks the demo.* Expected: if we don't reset the SID's internal phase register to zero, it will likely (prob = 4095/4096) not be zero. If it is not zero, we expect silence.
+
+*Changing the audio file by replacing 0's with 2's breaks the demo.* Expected: this is because any two non-zero values are equivalent in our setup, since the SID's logic in this case is reduced to changing if 0 < PW. Whether PW is 1 or 255 or 4095 makes no difference, so long as it is not zero. Changing all bytes to non-zero is thus equivalent to setting them all to 1, or all to 0, for that matter.
+
+*Changing the audio file by replacing the 1's with 255's makes no audible difference.* Expected: this is the same reasoning as before.
+
+
+## Instructions
+
+The procedure (you can skip the first two lines if you already have an mp3) is:
+
+```bash
+pip install yt-dlp
+yt-dlp -x --audio-format mp3 -o "bettedaviseyes.mp3" "https://www.youtube.com/watch?v=EPOIS5taqA8"
+ffmpeg -i bettedaviseyes.mp3 -t 16.7 -ar 985248 -ac 1 -f u8 -c:a pcm_u8 1mhz.pcm8
+python build_reu.py 1mhz.pcm8 -o pdm.reu
+java -jar KickAss.jar pdm.asm
+x64sc -reu -reusize 16384 -reuimage pdm.reu pdm.prg
+```
+
+Steps are explained below in more detail.
+
+### Step 0. (Optional) Download mp3 from a youtube source
+
+If you don't have one handy, we can grab an mp3 from youtube:
+
+```bash
+pip install yt-dlp
+```
+
+We can convert then via:
+
+```bash
+yt-dlp -x --audio-format mp3 -o "your_song.mp3" "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
+```
+
+or
+
+```bash
+yt-dlp -x --audio-format wav -o "downloaded_audio.wav" "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
+```
+
+### Step 1. Convert the mp3 to an intermediate 8-bit pcm format
+
+Now we use the famed ffmpeg tool:
+
+```bash
+ffmpeg -i your_song.mp3 -t 16.7 -ar 985248 -ac 1 -f u8 -c:a pcm_u8 1mhz.pcm8
+```
+
+Here 16.7 is the length of the sample in seconds, while 985248 is the clock speed (in Hz) of a PAL C64 system. (NTSC C64 has a clock speed of 1.022727 MHz.)
+
+### Step 2. Build REU image `build_reu.py`
+
+Next we take our `1mhz.pcm8` file and convert it to the REU image used by the program.
+
+The script uses so-called 1st-order 1-bit delta-sigma modulator. This is a fancy term for the most obvious quantization algorithm (i.e. sweep the quantization error forward as you choose 1's and 0's). The code should make the simplicity of the technique clear.
+
+```bash
+python build_reu.py 1mhz.pcm8 -o pdm.reu
+```
+
+Note that the REU image `pdm.reu` that is created is nothing fancy: in fact, it is literally just the bytes themselves. Just a 16MiB file of bytes that are either 0 or 1.
+
+### Step 3. Compilation of assembler code
+
+The assembly code is written in Kick Assembler, and the compilation instruction is:
+
+```bash
+java -jar KickAss.jar pdm.asm
+```
+
+This creates `pdm.prg`.
+
+
+### Step 4. Playback on VICE emulator
+
+To use the VICE emulator with a 16MiB REU, type:
+
+```bash
+x64sc -reu -reusize 16384 -reuimage pdm.reu pdm.prg
+```
