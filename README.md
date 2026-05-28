@@ -12,17 +12,18 @@ It might also be referred to as a 1-bit DAC:
 
 https://en.wikipedia.org/wiki/1-bit_DAC
 
-Here are a couple other related articles:
+Here are a few other related articles:
 
 https://en.wikipedia.org/wiki/Delta-sigma_modulation
 
 https://en.wikipedia.org/wiki/Direct_Stream_Digital
 
+https://en.wikipedia.org/wiki/Super_Audio_CD
 
 ### Key facts
 
 * This technique turns audio into a file consisting only of the values 0 and 1, corresponding to a quantized ~1MHz sampling.
-* PDM is the encoding used in Sony's Super Audio CD (SACD) format, under the name Direct Stream Digital. it was released in 1999. they used 1-bit, 2.8224 MHz. Apparently it was popular among audiophiles, but did not get broader market adoption.
+* PDM is the encoding used in Sony's Super Audio CD (SACD) format, under the name Direct Stream Digital. it was released in 1999. they used 1-bit, 2.8224 MHz. Apparently it is popular among audiophiles, but did not get broader market adoption.
 
 ### Regarding the current C64 demonstration
 

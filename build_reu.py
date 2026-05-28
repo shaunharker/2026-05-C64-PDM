@@ -50,8 +50,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example Usage:
-  python build_reu.py input.raw output.reu
-  python build_reu.py input.raw output.reu --size 
+  python build_reu.py input.raw -o output.reu
         """
     )
 
