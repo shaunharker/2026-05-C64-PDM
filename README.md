@@ -33,7 +33,7 @@ https://en.wikipedia.org/wiki/Direct_Stream_Digital
 
 ### Technical Details
 
-You can expect the code `pdm.asm`:
+The `pdm.asm` code works as follows:
 
 * We use the pulse waveform, but in a non-standard way. The way the pulse waveform seems to work is that an internal 12-bit counter register--an *oscillator accumulator*--is compared to a 12-bit pulse width (set in `$d402` and `$d403`) in order to determine whether it is in the duty cycle. For example, if the pulse width were 100, then when the oscillator accumulator is less than 100, duty on, otherwise duty off. The frequency register determines the speed at which this oscillator accumulator loops through the values 0-4095. 
 * We set the frequency register at `$d400`-`$d401` to 0. This means the oscillator accumulator never advances. 
