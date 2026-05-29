@@ -29,8 +29,8 @@ https://en.wikipedia.org/wiki/Super_Audio_CD
 
 * This code lets you play back 16 second samples on a C64 that are rather high quality except they have a 'ticking' sound in the background.
 * The method is to exploit a cartridge REU's DMA (RAM Expansion Unit Direct Memory Access) to blast the samples (the 0 and 1 bytes) into the `$d402` SID register that controls pulse wave width at the full clock speed of the C64 (~1MHz). The code configures the SID so that the resulting waveform is directly the sequence given, resulting in 1MHz 1-bit PDM on a 1982 machine. (Not that anyone had a 16MiB REU in the 1980s, which only holds enough for 16 seconds of audio using this technique. Technically we could store 8 times as much audio if we packed the bits into the bytes in a sensible way, but then we couldn't use the DMA trick to get such a fast sampling rate.)
-* The DMA is only in 64KiB chunks and this, I assume, is the cause of a ~15Hz 'ticking' sound. In particular the bank switching code interrupts the playback for 10 cycles (microseconds) fifteen times a second. This is perhaps fixable by getting a more versatile cartridge which allows longer uninterrupted bit-bashing. For example, "The RAD Expansion Unit" would probably be able to be programmed to fix this https://github.com/frntc/RAD. Or perhaps there is a way to quantize the sound that minimizes the effect of the bank switch playback gap. The current approach is a delta-sigma modulation technique which is completely unaware of the delays in playback.
-* This method completely takes over the computer. All interrupts are shut off, the screen is blanked, and the only thing the computer is doing is sending bytes off the cartridge into the SID chip. Anything that messes with the DMA would spoil the results worse than our bank switching.
+* The DMA is only in 64KiB chunks and this causes a ~15Hz 'ticking' sound due to bank switching code. What is happening is that during the 10 cycles where the 6510 is setting up the next DMA, no new data is being sent to `$d402`, and it remains 'stuck' at whatever value it was left at. These disruptions in playback, lasting for 10 microseconds each and repeated fifteen times a second, result in audible ticking. To mitigate this issue we take here the approach of tailoring the algorithm which creates the PDM data that goes on the REU--first-order delta-sigma modulation--to be aware of and recover from these delays.
+* To use DMA to pipe bytes directly to `$d402` at maximum speed, this method completely takes over the C64. All interrupts are shut off, the screen is blanked, and the only thing the C64 is doing is sending bytes off the cartridge into the SID chip in a loop.
 
 ### Technical Details
 
@@ -115,17 +115,17 @@ Here 16.7 is the length of the sample in seconds, while 985248 is the clock spee
 
 ### Step 2. Build REU image `build_reu.py` -- Converts PCM8 to PDM
 
-Next we take our `1mhz.pcm8` file and convert it to the REU image used by the program.
+Next we take our `1mhz.pcm8` file and convert it to the 16 MiB REU image used by the program.
 
 ```bash
 python build_reu.py 1mhz.pcm8 -o pdm.reu
 ```
 
-Note that the REU image `pdm.reu` that is created is nothing fancy: in fact, it is literally just the bytes themselves. Just a 16MiB file of bytes that are either 0 or 1. (Why not bitpacked? Because our REU DMA trick requires bytes to transfer to `$d402`. It's a terribly inefficient use of cartridge space, though. If it weren't for this, we could fit over two minutes of audio using this format.)
+An REU image is literally just the bytes themselves, there's no special metadata. Thus `pdm.reu` is just a 16MiB file of bytes that are either 0 or 1. (Why not bitpacked? Because our REU DMA trick requires bytes to transfer to `$d402`. It's a terribly inefficient use of cartridge space, though. If it weren't for this, we could fit over two minutes of audio using this format.)
 
-The script uses so-called 1st-order 1-bit *delta-sigma modulator*. This is very intimidating name for a rather simple algorithm. It is a quantization algorithm turning a string of 8-bit values into 1-bit values by comparing to 128, and sweeping quantization error forward (c.f. dithering algorithms for images; this is just a 1D version of Floyd-Steinberg). The `build_reu.py` script just applies this transformation and hands back our 16MiB REU image.
+The script uses what is called a 1st-order 1-bit *delta-sigma modulator*. This is very intimidating name for a rather simple algorithm. It is a quantization algorithm turning a string of 8-bit values into 1-bit values by comparing to 128 (or some suitable median value), and sweeping quantization error forward (c.f. dithering algorithms for images; this is just a 1D version of Floyd-Steinberg). 
 
-Here's the algorithm. Notice how on each step it computes an error, and tosses that onto the next byte. That's the idea. Whether or not this results in the cleanest quantization, I do not know. For a high enough bitrate, it's obviously fine. Is there some more computationally expensive way to quantize that sounds better at the 1MHz rate? Probably. I'm not an expert!
+We have two versions. The first version is as just described:
 
 ```python
     target_size = reu_size_mb * 1024 * 1024
@@ -145,6 +145,16 @@ Here's the algorithm. Notice how on each step it computes an error, and tosses t
             error = val
 
 ```
+
+In the second version, we address the 15 Hz ticking sound. The problem with Version 1 is that it is not aware that playback is being delayed for 10 cycles after every 65536 cycle bank with `$d402` stuck at its last value. We can improve the situation by accounting for the 'stuck' portions of playback during the bank switching cycles. Roughly, the idea is to take a majority poll over the region covered by the delay, excise the section the delay covers, and sweep forward the error. It seems likely there are improvements possible. Refer to the code for precise details.
+
+To hear the effect of this fix, you can compare the versions
+
+```bash
+python build_reu.py 1mhz.pcm8 -o version1.reu -v 1  # prominent 15 Hz ticking sound 
+python build_reu.py 1mhz.pcm8 -o version2.reu -v 2  # ticking issue substantially improved
+```
+
 ### Step 3. Compilation of assembler code
 
 The assembly code is written in Kick Assembler, and the compilation instruction is:
