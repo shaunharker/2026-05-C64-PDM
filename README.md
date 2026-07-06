@@ -173,3 +173,7 @@ To use the VICE emulator with a 16MiB REU, type:
 ```bash
 x64sc -reu -reusize 16384 -reuimage pdm.reu pdm.prg
 ```
+
+## AI Disclosure
+
+AI was used in the production of this repository.
